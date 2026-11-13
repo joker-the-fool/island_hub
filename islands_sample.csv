@@ -1,0 +1,5 @@
+id,title,desc,link,color,shape
+hub,中央廣場,所有功能的入口與總覽，從這裡開始逛。,pages/hub.html,#f2c14e,tower
+tools,工具小鎮,常用小工具集合：轉檔、計算、文字處理。,pages/tools.html,#6fbf73,house
+lab,研發實驗室,實驗中的新功能與原型，歡迎試用。,pages/lab.html,#7aa6e8,crystal
+docs,文件圖書館,說明文件、教學與常見問題整理。,pages/docs.html,#e58a8a,tree

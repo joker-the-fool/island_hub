@@ -1,0 +1,8 @@
+id,title,desc,link,color,shape
+hub,穩定,版本管理、銷售資料正確、跳電異常無災情、版本更新、自動回報風險、更換設備銷售資料不間斷。,pages/hub.html,#c4503a,tower
+version,版本管理,最簡單的最難得：程式碼、需求單、文件、母版、開發環境、執行環境管理。,pages/version.html,#6f9bc4,house
+update,版本更新,單元測試、整合測試、版本更新SOP、遠距更新、自我回報；嚴謹與自動化皆需擁有。,pages/update.html,#e0a040,crystal
+data,銷售資料正確,資料正確、資料即時轉出、資料救援功能、資料備份至Server。,pages/data.html,#7a9f5a,house
+replace,更換設備銷售資料不間斷,更換主機、撤機、新商場裝機工具、一鍵換裝，智慧工具降低影響。,pages/replace.html,#b86f9c,tree
+poweroff,跳電異常無災情,不論跳電還是踢到電源，讓意外止步於系統之外；保持資料完整性、保護電子發票資料安全。,pages/poweroff.html,#d9744a,tower
+report,自動回報風險,預防勝於治療：支援多種通訊機制、智慧判斷輕重緩急、整合第三方付費平台(option)。,pages/report.html,#5aa0a8,crystal

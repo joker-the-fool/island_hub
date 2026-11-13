@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>功能島嶼</title>
+<style>
+  :root { --panel:#fbf6ec; --ink:#3a2f2a; --sub:#7a6e66; --accent:#c4503a; --line:#eadfcb; --cream:#fdf8ee; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; overflow:hidden; font-family:"Microsoft JhengHei",system-ui,sans-serif; color:var(--ink); }
+  #scene { position:fixed; inset:0; width:100%; height:100%; display:block; }
+  #title { position:fixed; left:18px; top:16px; pointer-events:none; background:var(--cream); border-radius:20px;
+           padding:10px 22px 10px 18px; box-shadow:0 4px 14px #0002; display:flex; align-items:baseline; gap:10px; }
+  #title h1 { margin:0; font-size:30px; color:var(--accent); font-family:"Microsoft JhengHei",serif; letter-spacing:1px; }
+  #title p { margin:0; font-size:13px; color:var(--sub); font-weight:bold; }
+  #panel { position:fixed; right:0; top:0; bottom:0; width:340px; background:var(--panel);
+           box-shadow:-6px 0 20px #0002; display:flex; flex-direction:column; }
+  #panel header { padding:22px 22px 14px; }
+  #panel header h2 { margin:0 0 8px; font-size:22px; line-height:1.4; }
+  #panel header p { margin:0 0 12px; font-size:12px; color:var(--sub); line-height:1.6; }
+  #panel header .row { display:flex; gap:8px; }
+  #q { flex:1; padding:10px 14px; border:1px solid var(--line); border-radius:12px; background:#fff; font-size:13px; font-family:inherit; }
+  #panel header button { border:1px solid var(--line); background:#fff; border-radius:12px; padding:0 12px; cursor:pointer; font-size:12px; color:var(--ink); }
+  #list { overflow:auto; padding:0 22px 20px; flex:1; }
+  .item { display:flex; gap:16px; padding:16px 4px; border-top:1px solid var(--line); cursor:pointer; transition:background .15s; }
+  .item:hover, .item.active { background:#f3e9d6; }
+  .item .no { font-family:Georgia,"Times New Roman",serif; font-style:italic; font-size:28px; color:var(--accent); min-width:44px; }
+  .item .tx { flex:1; }
+  .item h3 { margin:0 0 4px; font-size:16px; }
+  .item p { margin:0; font-size:12px; color:var(--sub); line-height:1.6; }
+  .item a { font-size:13px; color:var(--sub); text-decoration:none; white-space:nowrap; align-self:flex-start; }
+  .item a:hover { color:var(--accent); }
+  #hint { position:fixed; left:20px; bottom:14px; font-size:12px; color:#3a2f2acc; background:#fdf8eecc; padding:4px 12px; border-radius:12px; pointer-events:none; }
+  #err { position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); background:#fff; padding:16px 20px; border-radius:8px; display:none; }
+  @media (max-width:700px) {
+    #panel { top:auto; width:100%; height:42%; }
+    #title h1 { font-size:22px; }
+    #title p { display:none; }
+    #hint { display:none; }
+  }
+</style>
+<script src="islands_data.js" onerror="void 0"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<div id="title"><h1>功能島嶼</h1><p>FUNCTION ISLANDS</p></div>
+<aside id="panel">
+  <header>
+    <h2>每個功能，<br>都有一座自己的小島。</h2>
+    <p id="count"></p>
+    <div class="row"><input id="q" placeholder="搜尋功能、關鍵字⋯"><button id="reset">全部小島</button></div>
+  </header>
+  <div id="list"></div>
+</aside>
+<div id="hint">拖曳旋轉・右鍵移動・滾輪縮放・點小島或列表前往</div>
+<div id="err"></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ---------- 讀 CSV：先 fetch，失敗(直接開檔)就用 islands_data.js ----------
+function parseCSV(text) {
+  text = text.replace(/^﻿/, '');
+  const rows = []; let row = [], cur = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"' && text[i+1] === '"') { cur += '"'; i++; }
+      else if (c === '"') { q = false; }
+      else { cur += c; }
+    } else if (c === '"') { q = true; }
+    else if (c === ',') { row.push(cur); cur = ''; }
+    else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i+1] === '\n') { i++; }
+      row.push(cur); cur = ''; if (row.some(v => v !== '')) { rows.push(row); } row = [];
+    } else { cur += c; }
+  }
+  if (cur !== '' || row.length) { row.push(cur); rows.push(row); }
+  const head = rows.shift().map(h => h.trim());
+  return rows.map(r => Object.fromEntries(head.map((h, i) => [h, (r[i] || '').trim()])));
+}
+async function loadData() {
+  try {
+    const r = await fetch('islands.csv', { cache: 'no-store' });
+    if (r.ok) { return parseCSV(await r.text()); }
+  } catch (e) {}
+  if (window.ISLANDS_CSV) { return parseCSV(window.ISLANDS_CSV); }
+  throw new Error('讀不到 islands.csv，也沒有 islands_data.js（請先執行 build_data.ps1）');
+}
+
+let data;
+try { data = await loadData(); }
+catch (e) { const el = document.getElementById('err'); el.textContent = e.message; el.style.display = 'block'; throw e; }
+
+// ---------- 場景 ----------
+const canvas = document.getElementById('scene');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xa9e4e4);
+scene.fog = new THREE.Fog(0xa9e4e4, 90, 200);
+const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 400);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.maxPolarAngle = Math.PI * 0.47;
+controls.minDistance = 5; controls.maxDistance = 150;
+
+scene.add(new THREE.HemisphereLight(0xfff6e0, 0xa8d8d8, 1.25));
+const sun = new THREE.DirectionalLight(0xfff0d0, 1.7);
+sun.position.set(-18, 34, 14); sun.castShadow = true;
+sun.shadow.camera.left = -45; sun.shadow.camera.right = 45; sun.shadow.camera.top = 45; sun.shadow.camera.bottom = -45;
+sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -0.0008;
+scene.add(sun);
+
+// 淺青綠色的海面（偏霧面、不反光）
+const sea = new THREE.Mesh(new THREE.CircleGeometry(220, 64).rotateX(-Math.PI/2),
+  new THREE.MeshStandardMaterial({ color: 0xb6efef, roughness: 1, metalness: 0 }));
+sea.position.y = -1.9; sea.receiveShadow = true; scene.add(sea);
+
+// 奶油色圓角標籤：左邊紅色編號徽章 + 島名；螢幕上固定大小，不隨距離放大
+function label(no, text) {
+  const c = document.createElement('canvas'); c.width = 640; c.height = 128;
+  const g = c.getContext('2d');
+  g.font = 'bold 50px "Microsoft JhengHei",sans-serif';
+  const tw = g.measureText(text).width;
+  const badgeW = 96, pad = 22, w = pad + badgeW + 16 + tw + pad, x0 = (640 - w) / 2;
+  g.shadowColor = '#0003'; g.shadowBlur = 10; g.shadowOffsetY = 4;
+  g.fillStyle = '#fdf8ee'; g.beginPath(); g.roundRect(x0, 20, w, 88, 44); g.fill();
+  g.shadowColor = 'transparent';
+  g.fillStyle = '#c4503a'; g.beginPath(); g.roundRect(x0 + 10, 30, badgeW, 68, 34); g.fill();
+  g.fillStyle = '#fff'; g.font = 'bold 40px Georgia,serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(no, x0 + 10 + badgeW / 2, 66);
+  g.fillStyle = '#3a2f2a'; g.font = 'bold 50px "Microsoft JhengHei",sans-serif'; g.textAlign = 'left';
+  g.fillText(text, x0 + pad + badgeW + 6, 68);
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false, sizeAttenuation: false }));
+  s.scale.set(0.24, 0.048, 1); s.renderOrder = 10; return s;
+}
+const mat = (c, r = 0.8) => new THREE.MeshStandardMaterial({ color: c, roughness: r, flatShading: true });
+function shadowed(m) { m.castShadow = true; m.receiveShadow = true; return m; }
+
+function place(m, o) {
+  if (o.position) { m.position.copy(o.position); }
+  if (o.rotation) { m.rotation.copy(o.rotation); }
+  return m;
+}
+// 可重現的亂數（同一座島每次長一樣）
+function rng(seed) { let s = seed * 9301 + 49297; return () => { s = (s * 9301 + 49297) % 233280; return s / 233280; }; }
+
+// 不規則的圓潤島形
+function blobGeo(r, seed, depth) {
+  const sh = new THREE.Shape(), n = 40;
+  for (let k = 0; k < n; k++) {
+    const a = k / n * Math.PI * 2;
+    const rr = r * (1 + 0.1 * Math.sin(3 * a + seed) + 0.07 * Math.sin(5 * a + seed * 2.3) + 0.04 * Math.sin(8 * a + seed));
+    k === 0 ? sh.moveTo(Math.cos(a) * rr, Math.sin(a) * rr) : sh.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
+  }
+  sh.closePath();
+  const g = new THREE.ExtrudeGeometry(sh, { depth, bevelEnabled: true, bevelSize: 0.18, bevelThickness: 0.18, bevelSegments: 2, curveSegments: 6 });
+  g.rotateX(-Math.PI / 2); return g;
+}
+const mk = (geo, color, x = 0, y = 0, z = 0) => { const m = shadowed(new THREE.Mesh(geo, mat(color))); m.position.set(x, y, z); return m; };
+
+function treeMesh(rand) {
+  const t = new THREE.Group(), s = 0.75 + rand() * 0.6;
+  t.add(mk(new THREE.CylinderGeometry(0.12 * s, 0.17 * s, 0.9 * s, 6), 0x8a5a35, 0, 0.45 * s, 0));
+  if (rand() < 0.35) { // 松樹
+    t.add(mk(new THREE.ConeGeometry(0.75 * s, 1.5 * s, 7), 0x5fa05a, 0, 1.5 * s, 0));
+    t.add(mk(new THREE.ConeGeometry(0.55 * s, 1.1 * s, 7), 0x6fb064, 0, 2.2 * s, 0));
+  } else { // 圓圓的闊葉樹
+    const cols = [0x7fbf6a, 0x8cc774, 0x6fb064];
+    t.add(mk(new THREE.IcosahedronGeometry(0.8 * s, 0), cols[Math.floor(rand() * 3)], 0, 1.4 * s, 0));
+    t.add(mk(new THREE.IcosahedronGeometry(0.5 * s, 0), cols[Math.floor(rand() * 3)], 0.4 * s, 1.0 * s, 0.2 * s));
+  }
+  return t;
+}
+function houseMesh(roof, w = 2.4, h = 1.6, d = 2.2) {
+  const g = new THREE.Group();
+  g.add(mk(new THREE.BoxGeometry(w, h, d), 0xfff1d6, 0, h / 2, 0));
+  const r = mk(new THREE.ConeGeometry(Math.max(w, d) * 0.82, h * 0.85, 4), roof, 0, h + h * 0.42, 0); r.rotation.y = Math.PI / 4; g.add(r);
+  g.add(mk(new THREE.BoxGeometry(0.5, 0.9, 0.06), 0x8a5a35, 0, 0.45, d / 2 + 0.02));
+  g.add(mk(new THREE.BoxGeometry(0.45, 0.4, 0.06), 0x9ccfe0, w * 0.28, h * 0.62, d / 2 + 0.02));
+  return g;
+}
+function mainBuilding(shape, color) {
+  const col = new THREE.Color(color), g = new THREE.Group();
+  if (shape === 'tower') { // 燈塔
+    g.add(mk(new THREE.CylinderGeometry(0.75, 1.05, 3.2, 10), 0xfff1d6, 0, 1.6, 0));
+    g.add(mk(new THREE.CylinderGeometry(0.85, 0.9, 0.6, 10), col, 0, 1.4, 0));
+    g.add(mk(new THREE.CylinderGeometry(0.5, 0.5, 0.5, 10), 0xffe9a8, 0, 3.45, 0));
+    g.add(mk(new THREE.ConeGeometry(0.85, 0.9, 10), col, 0, 4.15, 0));
+    g.add(houseMesh(0xc4503a, 2.2, 1.3, 1.8).translateX(2.2).translateZ(0.8));
+  } else if (shape === 'crystal') { // 研發：小屋＋水晶
+    g.add(houseMesh(col, 2.6, 1.7, 2.2).translateX(-1));
+    for (let k = 0; k < 3; k++) {
+      const m = mk(new THREE.OctahedronGeometry(0.55 + k * 0.18), 0x9cc8f0, 1.9 + k * 0.5, 1 + k * 0.25, -0.6 + (k % 2) * 1.2);
+      m.scale.y = 1.9; g.add(m);
+    }
+  } else if (shape === 'tree') { // 涼亭 + 大樹
+    for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) { g.add(mk(new THREE.CylinderGeometry(0.1, 0.1, 1.6, 6), 0xfff1d6, x, 0.8, z)); }
+    g.add(mk(new THREE.ConeGeometry(1.9, 1.1, 6), col, 0, 2.15, 0));
+    g.add(mk(new THREE.CylinderGeometry(1.2, 1.2, 0.15, 12), 0xe8d3a6, 0, 0.08, 0));
+  } else { // house：藍紅屋頂的小鎮
+    g.add(houseMesh(col, 2.6, 1.7, 2.3).translateX(-0.8));
+    g.add(houseMesh(0x6f9bc4, 1.9, 1.3, 1.8).translateX(2.2).translateZ(-0.6));
+  }
+  return g;
+}
+
+const R_ISL = 5;
+const islands = [];
+const N = data.length;
+data.forEach((d, i) => {
+  const grp = new THREE.Group();
+  const color = d.color || '#6fbf73', rand = rng(i + 3), r = i === 0 ? R_ISL + 0.8 : R_ISL;
+  // 由下而上：深沙 → 沙 → 草地，加一圈淡色浪花
+  const foam = new THREE.Mesh(blobGeo(r * 1.28, i, 0.02), new THREE.MeshBasicMaterial({ color: 0xc9eeee, transparent: true, opacity: 0.55 }));
+  foam.position.y = -1.88;
+  const dark = mk(blobGeo(r * 0.9, i, 0.9), 0xd2ae7c, 0, -2.2, 0);
+  const sand = mk(blobGeo(r, i, 1.3), 0xf1dcae, 0, -1.3, 0);
+  const grass = mk(blobGeo(r * 0.86, i, 0.3), 0xa9d18a, 0, 0, 0);
+  grp.add(foam, dark, sand, grass);
+  const top = 0.5;
+  const main = mainBuilding(d.shape, color); main.position.y = top; main.rotation.y = rand() * 0.6 - 0.3;
+  grp.add(main);
+  // 周圍散布樹木（避開中央建築）
+  const cnt = 6 + Math.floor(rand() * 3);
+  for (let k = 0; k < cnt; k++) {
+    const a = rand() * Math.PI * 2, rr = r * (0.5 + rand() * 0.28);
+    const t = treeMesh(rand); t.position.set(Math.cos(a) * rr, top, Math.sin(a) * rr); grp.add(t);
+  }
+  const lb = label(String(i + 1).padStart(2, '0'), d.title); lb.position.y = 7;
+  grp.add(lb);
+  // 第一座放中間，其餘繞一圈
+  const n = Math.max(N - 1, 1);
+  const ringR = n >= 2 ? Math.max(12.5, 12 / (2 * Math.sin(Math.PI / n))) : 12.5;
+  const k = Math.max(i - 1, 0), a = k / n * Math.PI * 2 + 0.4;
+  const pos = (i === 0 && N > 1) ? new THREE.Vector3(0, 0, 0) : new THREE.Vector3(Math.cos(a) * ringR, 0, Math.sin(a) * ringR);
+  grp.position.copy(pos);
+  scene.add(grp);
+  const hit = [];
+  grp.traverse(o => { if (o.isMesh && o !== foam) { hit.push(o); } });
+  hit.push(lb);
+  hit.forEach(m => { m.userData.idx = i; });
+  islands.push({ d, grp, pos, r, phase: i * 1.3, hit });
+});
+const clickable = islands.flatMap(o => o.hit);
+
+// ---------- 木橋：中央連每座島，相鄰的島也互連 ----------
+const bridges = [];
+function bridge(A, B) {
+  const dir = new THREE.Vector3().subVectors(B.pos, A.pos).setY(0), len0 = dir.length(); dir.normalize();
+  const p0 = A.pos.clone().addScaledVector(dir, A.r * 0.92), p1 = B.pos.clone().addScaledVector(dir, -B.r * 0.92);
+  const len = p0.distanceTo(p1); if (len < 0.5) { return; }
+  const g = new THREE.Group(); g.position.copy(p0); g.rotation.y = Math.atan2(-dir.z, dir.x);
+  const steps = Math.ceil(len / 0.42);
+  for (let s = 0; s <= steps; s++) {
+    const u = s / steps, p = mk(new THREE.BoxGeometry(0.34, 0.08, 1.2), s % 2 ? 0xb98a56 : 0xc89a64, u * len, 0.45 - Math.sin(u * Math.PI) * -0.12, 0);
+    g.add(p);
+  }
+  for (const z of [-0.62, 0.62]) {
+    const rail = mk(new THREE.BoxGeometry(len, 0.05, 0.05), 0x7a5a3a, len / 2, 0.95, z); g.add(rail);
+    for (const u of [0, 0.5, 1]) { g.add(mk(new THREE.BoxGeometry(0.08, 0.6, 0.08), 0x7a5a3a, u * len, 0.7, z)); }
+  }
+  scene.add(g);
+  // 小人走動用的路線：A 島內 → 橋頭 → 橋尾 → B 島內
+  bridges.push({ pts: [A.pos.clone().addScaledVector(dir, A.r * 0.35), p0, p1, B.pos.clone().addScaledVector(dir, -B.r * 0.35)] });
+}
+if (N > 1) { for (let i = 1; i < N; i++) { bridge(islands[0], islands[i]); } }
+for (let i = 1; i < N; i++) {
+  const j = i + 1 < N ? i + 1 : 1;
+  if (j !== i && N > 3 && islands[i].pos.distanceTo(islands[j].pos) < 17) { bridge(islands[i], islands[j]); }
+}
+
+// ---------- 生物：橋上走動的小人、跳出水面的魚、飛過天空的海鷗 ----------
+const SEA_Y = -1.9;
+const shirt = [0xc4503a, 0x6f9bc4, 0xe0a040, 0x7a9f5a, 0xb86f9c, 0x5aa0a8];
+const walkers = [];
+bridges.forEach((b, bi) => {
+  const segLen = [0, 1, 2].map(k => b.pts[k].distanceTo(b.pts[k + 1]));
+  const total = segLen[0] + segLen[1] + segLen[2];
+  for (let k = 0; k < 2; k++) {
+    const p = new THREE.Group();
+    p.add(mk(new THREE.CylinderGeometry(0.11, 0.14, 0.36, 6), shirt[(bi * 2 + k) % shirt.length], 0, 0.18, 0));
+    p.add(mk(new THREE.SphereGeometry(0.12, 8, 6), 0xf2c9a0, 0, 0.46, 0));
+    p.scale.setScalar(1.5);
+    scene.add(p);
+    walkers.push({ p, b, segLen, total, s: Math.random() * total, dir: k === 0 ? 1 : -1, speed: 0.9 + Math.random() * 0.6 });
+  }
+});
+function walkerPos(w, out) {
+  let s = w.s, k = 0;
+  while (k < 2 && s > w.segLen[k]) { s -= w.segLen[k]; k++; }
+  const u = w.segLen[k] > 0 ? s / w.segLen[k] : 0;
+  out.lerpVectors(w.b.pts[k], w.b.pts[k + 1], u);
+  out.y = 0.5 + (k === 1 ? Math.sin(u * Math.PI) * 0.12 : 0) + Math.abs(Math.sin(w.s * 7)) * 0.05;
+}
+
+const fishes = [];
+for (let k = 0; k < 4; k++) {
+  const f = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 6), mat(0xf09a4a)); body.scale.set(0.5, 0.5, 1.4);
+  const tail = new THREE.Mesh(new THREE.ConeGeometry(0.25, 0.4, 4), mat(0xf5c07a)); tail.rotation.x = -Math.PI / 2; tail.position.z = -0.55;
+  f.add(body, tail); f.scale.setScalar(1.3); f.visible = false; scene.add(f);
+  fishes.push({ f, wait: 1 + Math.random() * 5, t: -1, dur: 1.1, a: new THREE.Vector3(), d: new THREE.Vector3() });
+}
+const ripples = [];
+for (let k = 0; k < 8; k++) {
+  const m = new THREE.Mesh(new THREE.RingGeometry(0.35, 0.5, 28).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false }));
+  m.position.y = SEA_Y + 0.03; scene.add(m); ripples.push({ m, t: 9 });
+}
+let ripIdx = 0;
+function ripple(x, z) { const r = ripples[ripIdx++ % ripples.length]; r.m.position.x = x; r.m.position.z = z; r.t = 0; }
+function pickWater() { // 找一個不在島上的水面點
+  for (let n = 0; n < 12; n++) {
+    const o = islands[Math.floor(Math.random() * N)], a = Math.random() * Math.PI * 2, d = o.r * 1.5 + Math.random() * 3;
+    const x = o.pos.x + Math.cos(a) * d, z = o.pos.z + Math.sin(a) * d;
+    if (islands.every(q => Math.hypot(q.pos.x - x, q.pos.z - z) > q.r * 1.3)) { return [x, z]; }
+  }
+  return [40, 40];
+}
+
+const gulls = [];
+for (let k = 0; k < 5; k++) {
+  const g = new THREE.Group(), white = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, flatShading: true });
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.5, 8, 6), white); body.scale.set(1.6, 0.5, 0.5);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 6), white); head.position.x = 0.85;
+  const beak = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.3, 4), mat(0xf0a030)); beak.rotation.z = -Math.PI / 2; beak.position.x = 1.15;
+  g.add(body, head, beak);
+  const wings = [-1, 1].map(sd => {
+    const pv = new THREE.Group(); pv.position.z = sd * 0.15;
+    const w = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.04, 1.6), white); w.position.z = sd * 0.8; pv.add(w); g.add(pv); return { pv, sd };
+  });
+  g.scale.setScalar(1.8); scene.add(g);
+  gulls.push({ g, wings, wait: k * 2.5, v: new THREE.Vector3(), phase: Math.random() * 6, y: 0, live: false });
+}
+function launchGull(o) {
+  const th = Math.random() * Math.PI * 2, sp = 6 + Math.random() * 4;
+  o.v.set(Math.cos(th) * sp, 0, Math.sin(th) * sp);
+  o.y = 24 + Math.random() * 12;
+  const off = (Math.random() - 0.5) * 70;
+  o.g.position.set(-Math.cos(th) * 110 - Math.sin(th) * off, o.y, -Math.sin(th) * 110 + Math.cos(th) * off);
+  o.g.rotation.y = Math.atan2(-o.v.z, o.v.x); o.live = true; o.g.visible = true;
+}
+gulls.forEach(o => { o.g.visible = false; });
+
+const tmpV = new THREE.Vector3();
+function updateLife(dt, t) {
+  walkers.forEach(w => {
+    w.s += w.dir * w.speed * dt;
+    if (w.s > w.total) { w.s = w.total; w.dir = -1; } else if (w.s < 0) { w.s = 0; w.dir = 1; }
+    walkerPos(w, w.p.position);
+    w.p.rotation.z = Math.sin(w.s * 7) * 0.08;
+  });
+  fishes.forEach(o => {
+    if (o.t < 0) {
+      o.wait -= dt;
+      if (o.wait <= 0) {
+        const [x, z] = pickWater(), a = Math.random() * Math.PI * 2;
+        o.a.set(x, SEA_Y - 0.2, z); o.d.set(Math.cos(a) * 2.2, 0, Math.sin(a) * 2.2);
+        o.t = 0; o.f.visible = true; ripple(x, z);
+      }
+      return;
+    }
+    o.t += dt / o.dur;
+    const u = Math.min(o.t, 1), h = 2.3 * 4 * u * (1 - u);
+    o.f.position.set(o.a.x + o.d.x * u, o.a.y + h, o.a.z + o.d.z * u);
+    tmpV.set(o.d.x, 2.3 * 4 * (1 - 2 * u) * 1.0, o.d.z); o.f.lookAt(o.f.position.clone().add(tmpV));
+    if (o.t >= 1) { o.t = -1; o.f.visible = false; o.wait = 3 + Math.random() * 6; ripple(o.a.x + o.d.x, o.a.z + o.d.z); }
+  });
+  ripples.forEach(r => {
+    if (r.t > 1.4) { r.m.material.opacity = 0; return; }
+    r.t += dt; const u = r.t / 1.4;
+    r.m.scale.setScalar(1 + u * 4); r.m.material.opacity = 0.7 * (1 - u);
+  });
+  gulls.forEach(o => {
+    if (!o.live) { o.wait -= dt; if (o.wait <= 0) { launchGull(o); } return; }
+    o.g.position.addScaledVector(o.v, dt);
+    o.g.position.y = o.y + Math.sin(t * 1.3 + o.phase) * 0.8;
+    const fl = Math.sin(t * 8 + o.phase) * 0.55;
+    o.wings.forEach(w => { w.pv.rotation.x = w.sd * fl; });
+    if (Math.hypot(o.g.position.x, o.g.position.z) > 125 && o.g.position.dot(o.v) > 0) { o.live = false; o.g.visible = false; o.wait = 2 + Math.random() * 8; }
+  });
+}
+
+// ---------- 右側列表 ----------
+const listEl = document.getElementById('list');
+const items = data.map((d, i) => {
+  const el = document.createElement('div');
+  el.className = 'item';
+  const no = document.createElement('div'); no.className = 'no'; no.textContent = String(i + 1).padStart(2, '0');
+  const tx = document.createElement('div'); tx.className = 'tx';
+  const h = document.createElement('h3'); h.textContent = d.title;
+  const p = document.createElement('p'); p.textContent = d.desc;
+  tx.append(h, p);
+  const a = document.createElement('a'); a.href = d.link; a.textContent = '前往 ↗';
+  a.addEventListener('click', e => e.stopPropagation());
+  el.append(no, tx, a);
+  el.addEventListener('click', () => focusIsland(i));
+  listEl.append(el); return el;
+});
+
+document.getElementById('count').textContent = N + ' 座小島。選一座島，走進去看看。';
+// 搜尋：依標題與簡述篩選列表
+document.getElementById('q').addEventListener('input', e => {
+  const k = e.target.value.trim().toLowerCase();
+  items.forEach((el, i) => { el.style.display = (data[i].title + data[i].desc).toLowerCase().includes(k) ? '' : 'none'; });
+});
+
+// ---------- 鏡頭飛行 ----------
+const overview = { pos: new THREE.Vector3(0, 52, 46), target: new THREE.Vector3(0, 0, 0) };
+camera.position.copy(overview.pos);
+let fly = null;
+function flyTo(pos, target) {
+  fly = { p0: camera.position.clone(), t0: controls.target.clone(), p1: pos, t1: target, t: 0 };
+}
+function focusIsland(i) {
+  items.forEach((el, k) => el.classList.toggle('active', k === i));
+  items[i].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  const c = islands[i].pos;
+  const out = c.clone().setY(0); out.length() < 0.1 ? out.set(0, 0, 1) : out.normalize();
+  flyTo(c.clone().addScaledVector(out, 17).add(new THREE.Vector3(0, 24, 0)), c.clone().add(new THREE.Vector3(0, 1.5, 0)));
+  history.replaceState(null, '', '#' + data[i].id);
+}
+document.getElementById('reset').onclick = () => {
+  items.forEach(el => el.classList.remove('active'));
+  flyTo(overview.pos.clone(), overview.target.clone());
+  history.replaceState(null, '', location.pathname);
+};
+
+// ---------- 點擊小島 ----------
+const ray = new THREE.Raycaster(), mouse = new THREE.Vector2();
+let down = null;
+canvas.addEventListener('pointerdown', e => { down = [e.clientX, e.clientY]; });
+canvas.addEventListener('pointerup', e => {
+  if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5) { return; }
+  mouse.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  ray.setFromCamera(mouse, camera);
+  const h = ray.intersectObjects(clickable, false)[0];
+  if (h) { focusIsland(h.object.userData.idx); }
+});
+canvas.addEventListener('pointermove', e => {
+  mouse.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  ray.setFromCamera(mouse, camera);
+  canvas.style.cursor = ray.intersectObjects(clickable, false).length ? 'pointer' : 'grab';
+});
+
+function resize() {
+  renderer.setSize(innerWidth, innerHeight, false);
+  camera.aspect = innerWidth / innerHeight;
+  // 視窗偏窄（直式）時，總覽鏡頭拉遠，讓全部小島都入鏡
+  const zoomK = Math.max(1, 0.86 / camera.aspect);
+  overview.pos.set(0, 52 * zoomK, 46 * zoomK);
+  if (fly === null && controls.target.lengthSq() < 0.01) { camera.position.copy(overview.pos); }
+  // 右側面板蓋住畫面的部分，把場景中心往左移，不被遮到
+  if (innerWidth > 700) { camera.setViewOffset(innerWidth, innerHeight, 160, 0, innerWidth, innerHeight); }
+  else { camera.setViewOffset(innerWidth, innerHeight, 0, innerHeight * 0.2, innerWidth, innerHeight); } // 手機版：面板在下方，場景往上移
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize); resize();
+
+// ---------- 動畫 ----------
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const dt = clock.getDelta(), t = clock.elapsedTime;
+  islands.forEach(o => { o.grp.position.y = Math.sin(t * 0.8 + o.phase) * 0.04; });
+  updateLife(dt, t);
+  if (fly) {
+    fly.t = Math.min(1, fly.t + dt / 1.2);
+    const k = fly.t < 0.5 ? 4 * fly.t ** 3 : 1 - (-2 * fly.t + 2) ** 3 / 2;
+    camera.position.lerpVectors(fly.p0, fly.p1, k);
+    controls.target.lerpVectors(fly.t0, fly.t1, k);
+    if (fly.t >= 1) { fly = null; }
+  }
+  controls.update();
+  renderer.render(scene, camera);
+});
+
+// 帶 #id 進來時直接飛到該島
+const start = data.findIndex(d => d.id === location.hash.slice(1));
+if (start >= 0) { focusIsland(start); }
+</script>
+</body>
+</html>
